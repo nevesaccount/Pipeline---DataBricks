@@ -1,0 +1,88 @@
+# Databricks notebook source
+# MAGIC %md
+# MAGIC ### Camada Silver: Limpeza e Transformação dos Dados
+# MAGIC **Responsabilidade:** Ler os dados da camada Bronze e aplicar regras de qualidade:
+# MAGIC 1. Renomear colunas para um padrão consistente.
+# MAGIC 2. Corrigir tipos de dados (ex: converter texto para data).
+# MAGIC 3. Tratar valores nulos ou ausentes.
+# MAGIC 4. Remover registros inválidos.
+
+# COMMAND ----------
+
+# Importa as funções que vamos precisar da biblioteca PySpark.
+from pyspark.sql.functions import col, to_date
+
+# COMMAND ----------
+
+# Define os nomes das tabelas de origem (Bronze) e destino (Silver).
+bronze_db = "bronze"
+bronze_table = "vendas_raw"
+silver_db = "silver"
+silver_table = "vendas_limpa"
+
+print(f"Iniciando transformação de '{bronze_db}.{bronze_table}' para '{silver_db}.{silver_table}'")
+
+# COMMAND ----------
+
+# Cria o banco de dados da camada Silver se ele não existir.
+spark.sql(f"CREATE DATABASE IF NOT EXISTS {silver_db}")
+
+# COMMAND ----------
+
+# Lê a tabela da camada Bronze e a carrega em um DataFrame.
+df_silver = spark.read.table(f"{bronze_db}.{bronze_table}")
+
+# COMMAND ----------
+
+# MAGIC %md #### 1. Renomeando Colunas
+# MAGIC Padronizando os nomes das colunas para o formato "snake_case" (minúsculas com underscore), que é um padrão comum em engenharia de dados.
+
+# COMMAND ----------
+
+df_silver_renamed = df_silver.withColumnRenamed("ID_Pedido", "id_pedido") \
+                             .withColumnRenamed("Data_Pedido", "data_pedido") \
+                             .withColumnRenamed("ID_Cliente", "id_cliente") \
+                             .withColumnRenamed("ID_Produto", "id_produto") \
+                             .withColumnRenamed("Nome_Produto", "nome_produto") \
+                             .withColumnRenamed("Categoria", "categoria") \
+                             .withColumnRenamed("Quantidade", "quantidade") \
+                             .withColumnRenamed("Preco_Unitario", "preco_unitario")
+
+# COMMAND ----------
+
+# MAGIC %md #### 2. Corrigindo Tipos de Dados
+# MAGIC A coluna `data_pedido` foi lida como texto (string), mas precisamos que ela seja do tipo data para fazer análises temporais.
+
+# COMMAND ----------
+
+# Usa a função `to_date` para converter a coluna de texto para data, especificando o formato original.
+df_silver_typed = df_silver_renamed.withColumn("data_pedido", to_date(col("data_pedido"), "yyyy-MM-dd"))
+
+# COMMAND ----------
+
+# MAGIC %md #### 3. Tratando Dados Nulos e Inválidos
+# MAGIC Removemos registros que não têm valor para análise (sem ID de pedido ou produto) e preenchemos valores nulos em campos numéricos para evitar erros de cálculo.
+
+# COMMAND ----------
+
+# .na.drop(): Remove linhas onde os valores nas colunas especificadas são nulos.
+# Um pedido sem ID ou sem produto é considerado inválido.
+df_silver_cleaned = df_silver_typed.na.drop(subset=["id_pedido", "id_produto"])
+
+# .na.fill(): Preenche valores nulos com um valor específico.
+# Substituímos o preço unitário nulo por 0.0. Poderíamos também usar a média, mas 0.0 é mais seguro para este caso.
+df_silver_filled = df_silver_cleaned.na.fill(value=0.0, subset=["preco_unitario"])
+
+# COMMAND ----------
+
+# Salva a tabela limpa e transformada na camada Silver.
+df_silver_filled.write.format("delta") \
+    .mode("overwrite") \
+    .saveAsTable(f"{silver_db}.{silver_table}")
+
+print(f"SUCESSO: Tabela '{silver_db}.{silver_table}' processada e salva.")
+
+# COMMAND ----------
+
+# Opcional: Mostra os dados após a limpeza para verificação.
+display(spark.table(f"{silver_db}.{silver_table}").limit(5))
