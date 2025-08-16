@@ -1,0 +1,58 @@
+# Databricks notebook source
+# MAGIC %md
+# MAGIC ### Camada Bronze: Ingestão de Dados Brutos
+# MAGIC **Responsabilidade:** Ler o arquivo CSV original e salvá-lo como uma tabela Delta, mantendo a estrutura e os dados 100% fiéis à fonte.
+
+# COMMAND ----------
+
+# Cria um "widget" no topo do notebook. Isso nos permite passar o nome do arquivo
+# como um parâmetro quando executarmos o pipeline pelo orquestrador.
+# O valor padrão é 'dados_vendas.csv', mas pode ser alterado na execução.
+dbutils.widgets.text("nome_arquivo", "dados_vendas.csv", "Nome do Arquivo CSV de Origem")
+
+# COMMAND ----------
+
+# Pega o valor do widget para usar no código.
+nome_arquivo_csv = dbutils.widgets.get("nome_arquivo")
+# Constrói o caminho completo até o arquivo no Databricks File System (DBFS).
+caminho_arquivo_fonte = f"/FileStore/projeto_bi/{nome_arquivo_csv}"
+
+# Define o nome do nosso banco de dados (schema) e da tabela na camada Bronze.
+db_name = "bronze"
+table_name = "vendas_raw"
+
+print(f"Iniciando ingestão do arquivo: {caminho_arquivo_fonte}")
+
+# COMMAND ----------
+
+# Cria o banco de dados (também chamado de schema) se ele ainda não existir.
+# O comando "IF NOT EXISTS" previne erros se o banco de dados já foi criado.
+spark.sql(f"CREATE DATABASE IF NOT EXISTS {db_name}")
+
+# COMMAND ----------
+
+# Lê o arquivo CSV.
+# .format("csv"): Especifica o tipo de arquivo.
+# .option("header", "true"): Informa que a primeira linha do CSV é o cabeçalho (nomes das colunas).
+# .option("inferSchema", "true"): Pede ao Spark para tentar adivinhar o tipo de dado de cada coluna (texto, número, etc.).
+df_bronze = spark.read.format("csv") \
+    .option("header", "true") \
+    .option("inferSchema", "true") \
+    .load(caminho_arquivo_fonte)
+
+# COMMAND ----------
+
+# Salva o DataFrame como uma tabela no formato Delta Lake.
+# .format("delta"): Especifica o formato Delta, que nos dá segurança e performance.
+# .mode("overwrite"): Se a tabela já existir, ela será completamente substituída. Isso é útil para reprocessamentos.
+# .saveAsTable(...): Salva o resultado como uma tabela gerenciada pelo Databricks.
+df_bronze.write.format("delta") \
+    .mode("overwrite") \
+    .saveAsTable(f"{db_name}.{table_name}")
+
+print(f"SUCESSO: Arquivo ingerido para a tabela Delta '{db_name}.{table_name}'.")
+
+# COMMAND ----------
+
+# Opcional: Mostra as 5 primeiras linhas da tabela criada para verificação.
+display(spark.table(f"{db_name}.{table_name}").limit(5))
