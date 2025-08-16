@@ -1,0 +1,80 @@
+# Databricks notebook source
+# MAGIC %md
+# MAGIC ### Camada Gold: Agregação para Análise de Negócio
+# MAGIC **Responsabilidade:** Criar uma visão sumarizada dos dados, pronta para ser consumida por dashboards e relatórios.
+# MAGIC Também prepara os dados para exportação.
+
+# COMMAND ----------
+
+# Importa as funções de agregação que vamos usar.
+from pyspark.sql.functions import sum, count, expr
+
+# COMMAND ----------
+
+# Define os nomes das tabelas de origem (Silver) e destino (Gold).
+silver_db = "silver"
+silver_table = "vendas_limpa"
+gold_db = "gold"
+gold_table = "resumo_vendas_diarias"
+
+print(f"Iniciando agregação de '{silver_db}.{silver_table}' para '{gold_db}.{gold_table}'")
+
+# COMMAND ----------
+
+# Cria o banco de dados da camada Gold se ele não existir.
+spark.sql(f"CREATE DATABASE IF NOT EXISTS {gold_db}")
+
+# COMMAND ----------
+
+# Lê a tabela limpa da camada Silver.
+df_gold = spark.table(f"{silver_db}.{silver_table}")
+
+# COMMAND ----------
+
+# MAGIC %md #### Criando a Agregação de Negócio
+# MAGIC Vamos calcular o faturamento total e o número de pedidos por dia e por categoria de produto.
+
+# COMMAND ----------
+
+# .groupBy(): Agrupa todas as linhas que têm o mesmo valor em "data_pedido" e "categoria".
+# .agg(): Aplica funções de agregação a cada grupo.
+#   sum(...): Soma o resultado da expressão "quantidade * preco_unitario".
+#   count(...): Conta o número de pedidos em cada grupo.
+# .alias(...): Dá um nome amigável para a nova coluna calculada.
+df_resumo_vendas = df_gold.groupBy("data_pedido", "categoria") \
+    .agg(
+        sum(expr("quantidade * preco_unitario")).alias("faturamento_total"),
+        count("id_pedido").alias("numero_pedidos")
+    )
+
+# COMMAND ----------
+
+# Salva a tabela agregada na camada Gold.
+df_resumo_vendas.write.format("delta") \
+    .mode("overwrite") \
+    .saveAsTable(f"{gold_db}.{gold_table}")
+
+print(f"SUCESSO: Tabela agregada '{gold_db}.{gold_table}' criada.")
+
+# COMMAND ----------
+
+# MAGIC %md ---
+# MAGIC ### Etapa de Exportação para o Power BI
+# MAGIC Como não há conector direto na versão gratuita, salvamos uma cópia da tabela Gold em um formato otimizado (Parquet) em um local do DBFS que a API externa possa acessar.
+
+# COMMAND ----------
+
+caminho_exportacao_parquet = "/FileStore/gold_table.parquet"
+
+# Salva o DataFrame final em formato Parquet.
+# O modo "overwrite" garante que cada vez que o pipeline rodar, o arquivo de exportação seja o mais recente.
+df_resumo_vendas.write.format("parquet") \
+    .mode("overwrite") \
+    .save(caminho_exportacao_parquet)
+
+print(f"SUCESSO: Dados exportados para '{caminho_exportacao_parquet}' e prontos para download via API.")
+
+# COMMAND ----------
+
+# Opcional: Mostra a tabela final agregada.
+display(spark.table(f"{gold_db}.{gold_table}"))
